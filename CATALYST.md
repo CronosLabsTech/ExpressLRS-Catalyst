@@ -71,11 +71,11 @@ Mixing is assumed to happen on the transmitter, matching the ATtiny1616 firmware
 mapper and cannot reproduce that firmware's differential-drive mix, deadzone, or
 exponential response curve. Doing it receiver-side would need real work here.
 
-> **Naming caveat:** the target is called *Catalyst ELRS EVB*, but this pin map is the
-> **form-factor** board's wiring, not the original EVB's. The two differ. When the
-> form-factor board gets its own permanent target, this should split into two entries in
-> the targets fork — and because a submodule gitlink is per-branch, `main` and the
-> form-factor branch can pin different commits of it without conflicting.
+> **Naming caveat:** the target is called *Catalyst ELRS EVB*, but the EVB and the
+> form-factor board now share this exact pinout and configuration, so the one target
+> serves both and there is no reason to split it. Only the name is stale. Renaming it
+> would change `board_config`, the layout filename and the product name shown in the
+> configurator, so it is not free — worth doing deliberately, not incidentally.
 
 ## AM32 serial passthrough
 
