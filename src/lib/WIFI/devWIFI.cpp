@@ -1303,7 +1303,7 @@ static void HandleWebUpdate()
         WiFi.setOutputPower(13.5);
         WiFi.setPhyMode(WIFI_PHY_MODE_11N);
         #elif defined(PLATFORM_ESP32)
-        WiFi.setTxPower(WIFI_POWER_19_5dBm);
+        WiFi.setTxPower(WIFI_POWER_11dBm);   // Catalyst: 19.5dBm unstable, cause unknown
         #endif
         WiFi.softAPConfig(ipAddress, ipAddress, netMsk);
         WiFi.softAP(wifi_ap_ssid, wifi_ap_password);
@@ -1324,7 +1324,7 @@ static void HandleWebUpdate()
         WiFi.setOutputPower(13.5);
         WiFi.setPhyMode(WIFI_PHY_MODE_11N);
         #elif defined(PLATFORM_ESP32)
-        WiFi.setTxPower(WIFI_POWER_19_5dBm);
+        WiFi.setTxPower(WIFI_POWER_11dBm);   // Catalyst: 19.5dBm unstable, cause unknown
         WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
         WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
         #endif

@@ -33,12 +33,22 @@ The `Unified_ESP32C3_2400_RX_via_UART` environment is pinned to
 | `PWM_ESP32: size LEDC channel table to the SoC…` | **Upstream bug fixes, not Catalyst-specific.** Suitable to send upstream as-is. |
 | `Catalyst: ESP32-C3 USB logging, USB pin preservation, and AM32 passthrough` | Board support. |
 | `Track hardware definitions as a submodule…` | Build/repo plumbing. |
-| `HACK: cap WiFi TX power at 11dBm…` | **Workaround for an EVB power fault. Revert once the rail redesign lands.** |
+| `HACK: cap WiFi TX power at 11dBm…` | **Unresolved. See below - do not assume this is a supply problem.** |
 
-That last one is isolated deliberately: the EVB's AP7375 LDO can't source the current a
-19.5 dBm transmit draws, so the rail sags and WiFi drops. It caps TX power for *every*
-ESP32 target, not just this board. `git revert` it and retest before believing a new
-supply is good — leaving it in place hides the fault the redesign is meant to fix.
+That last one is isolated deliberately, and the reason for it is **not yet known**. The
+original theory was that the EVB's AP7375 LDO could not source the current a 19.5 dBm
+transmit draws, so the rail sagged and WiFi dropped. That theory is now disproven: the
+cap was reverted and retested against a 500 mA 3.3 V buck, and 19.5 dBm still fails.
+Supply capacity is therefore ruled out.
+
+What has not been ruled out: transient response and local decoupling near the module
+(a buck's rating says little about its behaviour on a 350 mA burst), the RF path itself,
+or something that is not a power problem at all — the failure has never been
+characterised beyond "WiFi drops". Worth capturing what actually happens at 19.5 dBm over
+the USB log before theorising further: a brownout, a watchdog reset and a silent AP
+disappearing are three different faults.
+
+Note the cap applies to *every* ESP32 target, not just this board.
 
 ## Pin mapping
 
