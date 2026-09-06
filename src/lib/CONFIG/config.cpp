@@ -1435,6 +1435,35 @@ void RxConfig::SetFailsafeMode(eFailsafeMode failsafeMode)
     }
 }
 
+void RxConfig::SetCatalystMix(bool mix)
+{
+    if (m_config.catalystMix != mix)
+    {
+        m_config.catalystMix = mix;
+        m_modified = EVENT_CONFIG_MODEL_CHANGED;
+    }
+}
+
+void RxConfig::SetCatalystAm32Blocked(bool blocked)
+{
+    if (m_config.catalystAm32Block != blocked)
+    {
+        m_config.catalystAm32Block = blocked;
+        m_modified = EVENT_CONFIG_MODEL_CHANGED;
+    }
+}
+
+// 0 disables invert-drive; otherwise a 1-based channel number.
+void RxConfig::SetCatalystInvertCh(uint8_t ch)
+{
+    if (ch > 16) ch = 0;
+    if (m_config.catalystInvertCh != ch)
+    {
+        m_config.catalystInvertCh = ch;
+        m_modified = EVENT_CONFIG_MODEL_CHANGED;
+    }
+}
+
 void RxConfig::SetBindStorage(rx_config_bindstorage_t value)
 {
     if (m_config.bindStorage != value)

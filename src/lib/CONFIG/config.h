@@ -242,7 +242,14 @@ typedef union {
 typedef struct __attribute__((packed)) {
     uint32_t    version;
     uint8_t     uid[UID_LEN];
-    uint8_t     unused_padding;
+    // Catalyst additions. Deliberately packed into what upstream calls padding so
+    // RX_CONFIG_VERSION does not move: cross-flashing stock ExpressLRS then keeps
+    // the bind instead of triggering SetDefaults. All-zero is current behaviour,
+    // which SetDefaults guarantees by memset, so no default needs setting.
+    uint8_t     catalystMix:1,       // 0 = tank (per-stick), 1 = differential mix
+                catalystAm32Block:1, // 0 = AM32 passthrough allowed, 1 = blocked
+                catalystInvertCh:5,  // 0 = off, else 1-based channel for invert-drive
+                catalystUnused:1;
     uint8_t     serial1Protocol:4,  // secondary serial protocol
                 serial1Protocol_unused:4;
     uint32_t    flash_discriminator;
@@ -268,6 +275,11 @@ typedef struct __attribute__((packed)) {
     uint8_t     targetSysId;
     uint8_t     sourceSysId;
 } rx_config_t;
+// The Catalyst settings above live in what upstream called unused_padding, so this
+// struct must stay exactly the size stock ExpressLRS 4.1.0 has. If it grows, the
+// on-flash layout diverges and RX_CONFIG_VERSION has to be bumped - which makes
+// cross-flashing stock wipe the bind. Verified: stock and Catalyst both 92 bytes.
+static_assert(sizeof(rx_config_t) == 92, "rx_config_t size changed - see comment above");
 
 class RxConfig : public BindphraseConfigurable
 {
@@ -295,6 +307,9 @@ public:
     bool GetForceTlmOff() const { return m_config.forceTlmOff; }
     uint8_t GetRateInitialIdx() const { return m_config.rateInitialIdx; }
     eSerialProtocol GetSerialProtocol() const { return (eSerialProtocol)m_config.serialProtocol; }
+    bool GetCatalystMix() const { return m_config.catalystMix; }
+    bool GetCatalystAm32Blocked() const { return m_config.catalystAm32Block; }
+    uint8_t GetCatalystInvertCh() const { return m_config.catalystInvertCh; }
 #if defined(PLATFORM_ESP32)
     eSerial1Protocol GetSerial1Protocol() const { return (eSerial1Protocol)m_config.serial1Protocol; }
 #endif
@@ -326,6 +341,9 @@ public:
     void SetTeamraceChannel(uint8_t teamraceChannel);
     void SetTeamracePosition(uint8_t teamracePosition);
     void SetFailsafeMode(eFailsafeMode failsafeMode);
+    void SetCatalystMix(bool mix);
+    void SetCatalystAm32Blocked(bool blocked);
+    void SetCatalystInvertCh(uint8_t ch);
     void SetTargetSysId(uint8_t sysID);
     void SetSourceSysId(uint8_t sysID);
     void SetBindStorage(rx_config_bindstorage_t value);
