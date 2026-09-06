@@ -161,8 +161,91 @@ static void servosEnterFailsafe()
     }
 }
 
+static uint16_t channelToUs(unsigned crsfVal, bool stretched)
+{
+    if (stretched)
+    {
+        if (OtaIsFullRes)
+            return fmap(crsfVal, CRSF_CHANNEL_VALUE_EXT_MIN, CRSF_CHANNEL_VALUE_EXT_MAX, US_CHANNEL_VALUE_MIN, US_CHANNEL_VALUE_MAX);
+        return fmap(crsfVal, CRSF_CHANNEL_VALUE_STD_MIN, CRSF_CHANNEL_VALUE_STD_MAX, US_CHANNEL_VALUE_MIN, US_CHANNEL_VALUE_MAX);
+    }
+    return CRSF_to_US(crsfVal);
+}
+
+#if defined(PLATFORM_ESP32_C3)
+// Catalyst drives a differential robot from outputs 0 (left) and 1 (right).
+// Both the mix and invert-drive combine those two channels, which the per-channel
+// loop below cannot express, so they are computed here and override outputs 0/1.
+//
+// Sources are whatever inputChannel each output is configured for, so the stock
+// ExpressLRS channel mapping still selects the sticks. With the mix off this
+// reproduces plain per-stick tank driving, which is the MK1 default.
+//
+// Ported from Software/ATtiny1616/src/mixing.c, minus the deadzone, the squaring
+// curve and the half-steering option - modern handsets do expo themselves.
+static constexpr int CATALYST_DRIVE_RANGE_US = 500;   // matches MOTOR_RANGE_DELTA_US
+static constexpr uint16_t CATALYST_INVERT_US = 1600;  // same threshold the ATtiny used
+
+static bool catalystDriveMix(uint16_t &leftUs, uint16_t &rightUs)
+{
+    const bool mix = config.GetCatalystMix();
+    const uint8_t invCh = config.GetCatalystInvertCh();
+    if ((!mix && invCh == 0) || GPIO_PIN_PWM_OUTPUTS_COUNT < 2)
+    {
+        return false;   // nothing to do; leave the stock path alone
+    }
+
+    const rx_config_pwm_t *cfgL = config.GetPwmChannel(0);
+    const rx_config_pwm_t *cfgR = config.GetPwmChannel(1);
+    const unsigned rawL = ChannelData[cfgL->val.inputChannel];
+    const unsigned rawR = ChannelData[cfgR->val.inputChannel];
+    if (rawL == CRSF_CHANNEL_VALUE_UNSET || rawR == CRSF_CHANNEL_VALUE_UNSET)
+    {
+        return false;
+    }
+
+    int steering = (int)channelToUs(rawL, cfgL->val.stretched) - US_CHANNEL_VALUE_CENTER;
+    int throttle = (int)channelToUs(rawR, cfgR->val.stretched) - US_CHANNEL_VALUE_CENTER;
+
+    int left, right;
+    if (mix)
+    {
+        // Full steering authority - no halving, unlike the ATtiny default.
+        left  = throttle + steering;
+        right = throttle - steering;
+    }
+    else
+    {
+        left  = steering;   // tank: each stick drives one side
+        right = throttle;
+    }
+
+    if (invCh >= 1 && invCh <= 16)
+    {
+        const unsigned rawInv = ChannelData[invCh - 1];
+        if (rawInv != CRSF_CHANNEL_VALUE_UNSET && CRSF_to_US(rawInv) > CATALYST_INVERT_US)
+        {
+            // Upside down mirrors steering and reverses both sides, so the sides
+            // swap AND negate. Applied after the mix, before the per-output
+            // inverted flag, matching the ATtiny ordering.
+            const int tmp = left;
+            left  = -right;
+            right = -tmp;
+        }
+    }
+
+    leftUs  = constrain(left,  -CATALYST_DRIVE_RANGE_US, CATALYST_DRIVE_RANGE_US) + US_CHANNEL_VALUE_CENTER;
+    rightUs = constrain(right, -CATALYST_DRIVE_RANGE_US, CATALYST_DRIVE_RANGE_US) + US_CHANNEL_VALUE_CENTER;
+    return true;
+}
+#endif
+
 static void servoCalcAllChannels(servoWrite_fn write)
 {
+#if defined(PLATFORM_ESP32_C3)
+    uint16_t mixLeftUs = 0, mixRightUs = 0;
+    const bool driveMixed = catalystDriveMix(mixLeftUs, mixRightUs);
+#endif
     for (int ch = 0 ; ch < GPIO_PIN_PWM_OUTPUTS_COUNT ; ++ch)
     {
         const rx_config_pwm_t *chConfig = config.GetPwmChannel(ch);
@@ -175,16 +258,15 @@ static void servoCalcAllChannels(servoWrite_fn write)
         }
 
         uint16_t us;
-        if (chConfig->val.stretched)
+#if defined(PLATFORM_ESP32_C3)
+        if (driveMixed && ch < 2)
         {
-            if (OtaIsFullRes)
-                us = fmap(crsfVal, CRSF_CHANNEL_VALUE_EXT_MIN, CRSF_CHANNEL_VALUE_EXT_MAX, US_CHANNEL_VALUE_MIN, US_CHANNEL_VALUE_MAX);
-            else
-                us = fmap(crsfVal, CRSF_CHANNEL_VALUE_STD_MIN, CRSF_CHANNEL_VALUE_STD_MAX, US_CHANNEL_VALUE_MIN, US_CHANNEL_VALUE_MAX);
+            us = (ch == 0) ? mixLeftUs : mixRightUs;
         }
         else
+#endif
         {
-            us = CRSF_to_US(crsfVal);
+            us = channelToUs(crsfVal, chConfig->val.stretched);
         }
         // Flip the output around the mid-value if inverted
         // (1500 - usOutput) + 1500
