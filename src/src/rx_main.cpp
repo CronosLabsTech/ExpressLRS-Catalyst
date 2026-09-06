@@ -1268,8 +1268,10 @@ static void setupSerial()
     {
         // For PWM receivers with no serial pins defined, only turn on the Serial port if logging is on
         #if defined(DEBUG_LOG) || defined(DEBUG_RCVR_LINKSTATS)
-        #if defined(PLATFORM_ESP32_S3) && !defined(ESP32_S3_USB_JTAG_ENABLED)
+        #if (defined(PLATFORM_ESP32_S3) && !defined(ESP32_S3_USB_JTAG_ENABLED)) || defined(PLATFORM_ESP32_C3)
         // Requires pull-down on GPIO3.  If GPIO3 has a pull-up (for JTAG) this doesn't work.
+        // C3: log over native USB-Serial-JTAG so UART0 (GPIO20/21) stays free for
+        // PWM outputs - on Catalyst GPIO21 is an ESC signal line.
         USBSerial.begin(serialBaud);
         BackpackOrLogStrm = &USBSerial;
         #else
@@ -2003,12 +2005,34 @@ void setup()
 
         // pre-initialise serial must be done before anything as some libs write
         // to the serial port and they'll block if the buffer fills
+        //
+        // On the C3, Serial.begin() unconditionally attaches to UART0 (GPIO20/21)
+        // regardless of what BackpackOrLogStrm ends up pointing at afterward - the
+        // pin mux gets claimed for UART TX/RX here, before the later USBSerial
+        // redirect ever runs. Those two GPIOs are PWM/LED outputs on this board,
+        // so route straight to USBSerial here too rather than letting Serial.begin()
+        // touch them at all.
         #if defined(DEBUG_LOG)
+        #if defined(PLATFORM_ESP32_C3)
+        USBSerial.begin(serialBaud);
+        BackpackOrLogStrm = &USBSerial;
+        #else
         Serial.begin(serialBaud);
         BackpackOrLogStrm = &Serial;
+        #endif
         #else
         BackpackOrLogStrm = new NullStream();
         #endif
+
+        // AM32 serial passthrough. This is the last point at which we can check:
+        // options_init() above has loaded the pin map, but setupTarget() below
+        // claims the PWM pins - and the configurator attaches to those very pads,
+        // so the two cannot coexist. If a configurator is present this never
+        // returns; there is no reason to bring up the radio or anything else.
+#if defined(PLATFORM_ESP32_C3)
+        extern bool am32Passthrough_checkAndRun();
+        am32Passthrough_checkAndRun();
+#endif
 
         // Init EEPROM and load config, checking powerup count
         setupConfigAndPocCheck();

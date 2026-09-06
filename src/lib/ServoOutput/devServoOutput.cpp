@@ -251,10 +251,24 @@ static bool initialize()
         pwmChannelValues[ch] = UINT16_MAX;
         pwmChannels[ch] = -1;
         int8_t pin = GPIO_PIN_PWM_OUTPUTS[ch];
-#if defined(DEBUG_LOG) || defined(DEBUG_RCVR_LINKSTATS)
-        // Disconnect the debug UART pins if DEBUG_LOG
+#if (defined(DEBUG_LOG) || defined(DEBUG_RCVR_LINKSTATS)) && !defined(PLATFORM_ESP32_C3)
+        // Disconnect the debug UART pins if DEBUG_LOG.
+        // Not needed on C3: logging goes out over native USB, so UART0's pins
+        // remain available as PWM outputs.
         if (pin == U0RXD_GPIO_NUM || pin == U0TXD_GPIO_NUM)
         {
+            pin = UNDEF_PIN;
+        }
+#endif
+#if defined(PLATFORM_ESP32_C3)
+        // If a USB host is attached, leave D+/D- as USB rather than claiming them
+        // for PWM. Costs the two channels sharing those pins, but keeps the CDC
+        // port alive so the board can be reflashed without the BOOT-strap dance.
+        // The right trade on a bench or in a production fixture - neither is
+        // driving motors - and with USB unplugged the channels behave normally.
+        if ((pin == USB_DP_GPIO_NUM || pin == USB_DM_GPIO_NUM) && HWCDC::isPlugged())
+        {
+            DBGLN("PWM ch %d (GPIO%d) left as USB: host attached", ch, pin);
             pin = UNDEF_PIN;
         }
 #endif
