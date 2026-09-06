@@ -13,7 +13,13 @@
 #endif
 
 #define MCPWM_CHANNELS 12
+// Must not exceed the SoC's real channel count: the C3/S3 have 6, not 8.
+// Handing ledc_channel_config() an out-of-range channel fails at runtime.
+#if defined(SOC_LEDC_CHANNEL_NUM)
+#define LEDC_CHANNELS SOC_LEDC_CHANNEL_NUM
+#else
 #define LEDC_CHANNELS 8
+#endif
 
 #define MCPWM_CHANNEL_FLAG 0x100
 #define LEDC_CHANNEL_FLAG 0x200
@@ -196,6 +202,13 @@ pwm_channel_t PWMController::allocate(uint8_t pin, uint32_t frequency)
 
 void PWMController::release(pwm_channel_t channel)
 {
+    // allocate() returns -1 on failure. -1 has every bit set, so it satisfies
+    // both IS_LEDC_CHANNEL and IS_MCPWM_CHANNEL and masks down to index 255,
+    // which then indexes off the end of ledc_config[]. Reject it up front.
+    if (channel < 0)
+    {
+        return;
+    }
     if (IS_LEDC_CHANNEL(channel))
     {
         auto ch = LEDC_CHANNEL(channel);
@@ -245,6 +258,10 @@ static void setLedcMapped(pwm_channel_t channel, bool active, uint32_t raw)
 
 void PWMController::setDuty(pwm_channel_t channel, uint16_t duty)
 {
+    if (channel < 0)    // unallocated channel, see release()
+    {
+        return;
+    }
     if (IS_LEDC_CHANNEL(channel))
     {
         auto ch = LEDC_CHANNEL(channel);
@@ -264,6 +281,10 @@ void PWMController::setDuty(pwm_channel_t channel, uint16_t duty)
 
 void PWMController::setMicroseconds(pwm_channel_t channel, uint16_t microseconds)
 {
+    if (channel < 0)    // unallocated channel, see release()
+    {
+        return;
+    }
     if (IS_LEDC_CHANNEL(channel))
     {
         auto ch = LEDC_CHANNEL(channel);
