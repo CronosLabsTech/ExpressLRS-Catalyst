@@ -38,6 +38,7 @@
 
 #include "targets.h"
 #include "logging.h"
+#include "config.h"
 
 // GPIO9 drives the shared AM32 /RST net. Not in the hardware JSON: it is the
 // boot strap, already pulled high by the board, which is the correct inactive
@@ -210,6 +211,12 @@ bool am32Passthrough_checkAndRun()
         return false;  // not a Catalyst-shaped target
     }
 
+    // Checked before the pads are sampled, so a blocked board never drives them.
+    if (config.GetCatalystAm32Blocked()) {
+        DBGLN("AM32 passthrough: disabled in config, skipping detection");
+        return false;
+    }
+
     // CH3's pad is also USB D+, which a connected host holds high - that reads
     // identically to a configurator idling its UART. So if a USB host is present,
     // never enter passthrough; it is either a developer or a production fixture,
@@ -238,6 +245,17 @@ bool am32Passthrough_checkAndRun()
         DBGLN("AM32 passthrough: configurator on CH4 -> RIGHT ESC");
     } else {
         return false;  // normal ELRS startup
+    }
+
+    // setupConfigAndPocCheck() incremented the power-on counter on the way in and
+    // scheduled the 2s clear as a deferred callback. relay() never returns to the
+    // main loop, so that callback never runs - three passthrough sessions would
+    // leave the counter at 3 and drop the next ordinary boot into binding mode.
+    // Clear it here instead: entering passthrough is a deliberate boot, not a
+    // half-finished one.
+    if (config.GetPowerOnCounter() != 0) {
+        config.SetPowerOnCounter(0);
+        config.Commit();
     }
 
     // Park the ESCs before touching anything, so they cannot be running their

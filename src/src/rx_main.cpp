@@ -2024,18 +2024,18 @@ void setup()
         BackpackOrLogStrm = new NullStream();
         #endif
 
-        // AM32 serial passthrough. This is the last point at which we can check:
-        // options_init() above has loaded the pin map, but setupTarget() below
-        // claims the PWM pins - and the configurator attaches to those very pads,
-        // so the two cannot coexist. If a configurator is present this never
-        // returns; there is no reason to bring up the radio or anything else.
+        // Init EEPROM and load config, checking powerup count
+        setupConfigAndPocCheck();
+
+        // AM32 serial passthrough. Must sit after setupConfigAndPocCheck (it reads
+        // the enable flag out of config) and before setupTarget below, which claims
+        // the PWM pins - the configurator attaches to those very pads, so the two
+        // cannot coexist. If a configurator is present this never returns; there is
+        // no reason to bring up the radio or anything else.
 #if defined(PLATFORM_ESP32_C3)
         extern bool am32Passthrough_checkAndRun();
         am32Passthrough_checkAndRun();
 #endif
-
-        // Init EEPROM and load config, checking powerup count
-        setupConfigAndPocCheck();
         setupTarget();
         // If serial is not already defined, then see if there is serial pin configured in the PWM configuration
         if (OPT_HAS_SERVO_OUTPUT && GPIO_PIN_RCSIGNAL_RX == UNDEF_PIN && GPIO_PIN_RCSIGNAL_TX == UNDEF_PIN)
