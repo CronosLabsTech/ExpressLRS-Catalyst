@@ -55,6 +55,32 @@ static selectionParameter luaSBUSFailsafeMode = {
     STR_EMPTYSPACE
 };
 
+#if defined(PLATFORM_ESP32_C3)
+// Catalyst additions. Stored in rx_config_t padding, so they cost no config version.
+static selectionParameter luaCatalystMix = {
+    {"Drive mix", CRSF_TEXT_SELECTION},
+    0, // value
+    "Tank;Mix",
+    STR_EMPTYSPACE
+};
+
+static selectionParameter luaCatalystAm32 = {
+    {"AM32 config", CRSF_TEXT_SELECTION},
+    0, // value
+    "Allowed;Blocked",
+    STR_EMPTYSPACE
+};
+
+// One control does both jobs: Off disables invert-drive, anything else selects the
+// channel that flips it. Index maps straight onto the stored 1-based channel.
+static selectionParameter luaCatalystInvertCh = {
+    {"Invert drive", CRSF_TEXT_SELECTION},
+    0, // value
+    "Off;Ch1;Ch2;Ch3;Ch4;Ch5;Ch6;Ch7;Ch8;Ch9;Ch10;Ch11;Ch12;Ch13;Ch14;Ch15;Ch16",
+    STR_EMPTYSPACE
+};
+#endif
+
 static int8Parameter luaTargetSysId = {
   {"Target SysID", CRSF_UINT8},
   {
@@ -523,6 +549,18 @@ void RXEndpoint::registerParameters()
     }
   });
 
+#if defined(PLATFORM_ESP32_C3)
+  registerParameter(&luaCatalystMix, [](propertiesCommon* item, uint8_t arg){
+    config.SetCatalystMix(arg != 0);
+  });
+  registerParameter(&luaCatalystAm32, [](propertiesCommon* item, uint8_t arg){
+    config.SetCatalystAm32Blocked(arg != 0);
+  });
+  registerParameter(&luaCatalystInvertCh, [](propertiesCommon* item, uint8_t arg){
+    config.SetCatalystInvertCh(arg);
+  });
+#endif
+
 #if defined(PLATFORM_ESP32)
   if (RX_HAS_SERIAL1)
   {
@@ -627,6 +665,12 @@ void RXEndpoint::updateParameters()
 #endif
 
   setTextSelectionValue(&luaSBUSFailsafeMode, config.GetFailsafeMode());
+
+#if defined(PLATFORM_ESP32_C3)
+  setTextSelectionValue(&luaCatalystMix, config.GetCatalystMix());
+  setTextSelectionValue(&luaCatalystAm32, config.GetCatalystAm32Blocked());
+  setTextSelectionValue(&luaCatalystInvertCh, config.GetCatalystInvertCh());
+#endif
 
   if (GPIO_PIN_ANT_CTRL != UNDEF_PIN)
   {
