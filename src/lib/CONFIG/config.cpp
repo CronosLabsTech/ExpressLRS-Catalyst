@@ -984,7 +984,6 @@ void RxConfig::UpgradeEepromV5()
     m_eeprom->Get(0, old);
 
     UpgradeUid(old.onLoan ? old.loanUID : nullptr, old.isBound ? old.uid : nullptr);
-    m_config.vbat.scale = old.vbatScale;
     CONFCOPY(power);
     CONFCOPY(antennaMode);
     CONFCOPY(forceTlmOff);
@@ -1012,7 +1011,6 @@ void RxConfig::UpgradeEepromV6()
     m_eeprom->Get(0, old);
 
     UpgradeUid(old.onLoan ? old.loanUID : nullptr, old.isBound ? old.uid : nullptr);
-    m_config.vbat.scale = old.vbatScale;
     CONFCOPY(power);
     CONFCOPY(antennaMode);
     CONFCOPY(forceTlmOff);
@@ -1031,7 +1029,6 @@ void RxConfig::UpgradeEepromV7V8(uint8_t ver)
     m_eeprom->Get(0, old);
 
     UpgradeUid(old.onLoan ? old.loanUID : nullptr, old.isBound ? old.uid : nullptr);
-    m_config.vbat.scale = old.vbatScale;
     CONFCOPY(power);
     CONFCOPY(antennaMode);
     CONFCOPY(forceTlmOff);
@@ -1074,8 +1071,6 @@ void RxConfig::UpgradeEepromV9V10(uint8_t ver)
     if (ver != 10)
     {
         CONFCOPY(serial1Protocol);
-        CONFCOPY(vbat.scale);
-        CONFCOPY(vbat.offset);
         CONFCOPY(bindStorage);
         CONFCOPY(power);
         CONFCOPY(antennaMode);
@@ -1462,6 +1457,24 @@ void RxConfig::SetCatalystInvertCh(uint8_t ch)
         m_config.catalystInvertCh = ch;
         m_modified = EVENT_CONFIG_MODEL_CHANGED;
     }
+}
+
+// Stores the measured gravity vector as the upright reference. The magic byte
+// means a config that was never calibrated - or one zeroed by SetDefaults - is
+// distinguishable from a real all-zero measurement.
+void RxConfig::SetCatalystOrient(int8_t x, int8_t y, int8_t z)
+{
+    m_config.catalystOrient.x = x;
+    m_config.catalystOrient.y = y;
+    m_config.catalystOrient.z = z;
+    m_config.catalystOrient.valid = CATALYST_ORIENT_MAGIC;
+    m_modified = EVENT_CONFIG_MODEL_CHANGED;
+}
+
+void RxConfig::ClearCatalystOrient()
+{
+    m_config.catalystOrient.valid = 0;
+    m_modified = EVENT_CONFIG_MODEL_CHANGED;
 }
 
 void RxConfig::SetBindStorage(rx_config_bindstorage_t value)

@@ -19,6 +19,10 @@
 #define TX_CONFIG_VERSION   8U
 #define RX_CONFIG_VERSION   11U
 
+// Marks the Catalyst IMU upright reference as calibrated. A zeroed or never-set
+// config reads 0 and is correctly treated as uncalibrated.
+#define CATALYST_ORIENT_MAGIC 0xA5
+
 class BindphraseConfigurable
 {
 public:
@@ -253,10 +257,15 @@ typedef struct __attribute__((packed)) {
     uint8_t     serial1Protocol:4,  // secondary serial protocol
                 serial1Protocol_unused:4;
     uint32_t    flash_discriminator;
+    // Catalyst: IMU upright reference, in the 4 bytes upstream reserved as a
+    // vbat override. Those were declared FUTURE and never read - devAnalogVbat
+    // takes scale and offset from the hardware JSON via hardware_int(), not from
+    // config - so this reuses dead space rather than growing the struct. Same 4
+    // packed bytes keeps rx_config_t at 92 and the config version where it is.
     struct __attribute__((packed)) {
-        uint16_t    scale;          // FUTURE: Override compiled vbat scale
-        int16_t     offset;         // FUTURE: Override comiled vbat offset
-    } vbat;
+        int8_t      x, y, z;        // gravity unit vector when upright, +-127 = +-1g
+        uint8_t     valid;          // CATALYST_ORIENT_MAGIC once calibrated
+    } catalystOrient;
     uint8_t     bindStorage:2,     // rx_config_bindstorage_t
                 power:4,
                 antennaMode:2;      // 0=0, 1=1, 2=Diversity
@@ -310,6 +319,10 @@ public:
     bool GetCatalystMix() const { return m_config.catalystMix; }
     bool GetCatalystAm32Blocked() const { return m_config.catalystAm32Block; }
     uint8_t GetCatalystInvertCh() const { return m_config.catalystInvertCh; }
+    bool GetCatalystOrientValid() const { return m_config.catalystOrient.valid == CATALYST_ORIENT_MAGIC; }
+    int8_t GetCatalystOrientX() const { return m_config.catalystOrient.x; }
+    int8_t GetCatalystOrientY() const { return m_config.catalystOrient.y; }
+    int8_t GetCatalystOrientZ() const { return m_config.catalystOrient.z; }
 #if defined(PLATFORM_ESP32)
     eSerial1Protocol GetSerial1Protocol() const { return (eSerial1Protocol)m_config.serial1Protocol; }
 #endif
@@ -344,6 +357,8 @@ public:
     void SetCatalystMix(bool mix);
     void SetCatalystAm32Blocked(bool blocked);
     void SetCatalystInvertCh(uint8_t ch);
+    void SetCatalystOrient(int8_t x, int8_t y, int8_t z);
+    void ClearCatalystOrient();
     void SetTargetSysId(uint8_t sysID);
     void SetSourceSysId(uint8_t sysID);
     void SetBindStorage(rx_config_bindstorage_t value);
