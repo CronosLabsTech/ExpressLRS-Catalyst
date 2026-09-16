@@ -73,6 +73,10 @@
 #define PACKET_TO_TOCK_SLACK 200 // Desired buffer time between Packet ISR and Tock ISR
 ///////////////////
 
+#if defined(PLATFORM_ESP32_C3) && defined(CATALYST_IMU_POC)
+extern device_t IMU_POC_device;
+#endif
+
 device_affinity_t ui_devices[] = {
   {&Serial0_device, 1},
 #if defined(PLATFORM_ESP32)
@@ -87,6 +91,9 @@ device_affinity_t ui_devices[] = {
   {&AnalogVbat_device, 0},
   {&ServoOut_device, 1},
   {&Baro_device, 0}, // must come after AnalogVbat_device to slow updates
+#if defined(PLATFORM_ESP32_C3) && defined(CATALYST_IMU_POC)
+  {&IMU_POC_device, 0},
+#endif
 #if defined(PLATFORM_ESP32) && !defined(PLATFORM_ESP32_C3)
   {&VTxSPI_device, 0},
   {&MSPVTx_device, 0}, // dependency on VTxSPI_device
