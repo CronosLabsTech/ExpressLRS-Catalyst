@@ -38,8 +38,11 @@ The `Unified_ESP32C3_2400_RX_via_UART` environment is pinned to
 | `Add differential mix and invert-drive to the servo outputs` | Drive behaviour. |
 | `Gate AM32 passthrough on config…` | Makes passthrough switchable. |
 | `HACK: cap WiFi TX power at 11dBm…` | **Unresolved. See below - do not assume this is a supply problem.** |
+| `Point src/hardware at…` | Submodule bumps: battery sense, then the radio reset moving to GPIO9. |
+| `Store an IMU upright reference in the dead vbat override bytes` | Config storage. **Direction since changed** - see IMU below. |
+| `Add an LSM6DS3TR-C bring-up POC on the shared radio SPI bus` | Bench only, behind a build flag in its own env. |
 
-That last one is isolated deliberately, and the reason for it is **not yet known**. The
+The WiFi cap is isolated deliberately, and the reason for it is **not yet known**. The
 original theory was that the EVB's AP7375 LDO could not source the current a 19.5 dBm
 transmit draws, so the rail sagged and WiFi dropped. That theory is now disproven: the
 cap was reverted and retested against a 500 mA 3.3 V buck, and 19.5 dBm still fails.
@@ -58,7 +61,7 @@ Note the cap applies to *every* ESP32 target, not just this board.
 
 | Function | GPIO |
 |---|---|
-| Radio NRESET | 0 |
+| **IMU CS** (LSM6DS3TR-C), ADC1_CH0 | **0** |
 | Radio DIO1 | 1 |
 | Radio NSS | 2 |
 | VSENSE (battery voltage) | 3 |
@@ -66,12 +69,16 @@ Note the cap applies to *every* ESP32 target, not just this board.
 | Radio SCK | 5 |
 | Radio MISO | 6 |
 | Radio MOSI | 7 |
+| Radio NRESET **and** AM32 shared `/RST`, and BOOT strap | 9 |
 | Radio BUSY | 10 |
-| AM32 shared `/RST`, and BOOT strap | 9 |
 | **PWM ch4** / USB D− / passthrough host pad | **18** |
 | **PWM ch3** / USB D+ / passthrough host pad | **19** |
 | **PWM ch1 — Left motor driver** (`U201` PB4) | **20** |
 | Status LED | 21 |
+
+The radio reset used to be GPIO0. It now shares GPIO9 with the AM32 reset
+(`radio_rst: 9` in the layout JSON), which freed GPIO0 for the IMU chip-select. The
+IMU sits on the radio's SPI bus (SCK 5 / MISO 6 / MOSI 7); INT1/INT2 are not wired.
 
 Radio DIO2/DIO3 drive the two link-status LEDs straight from the SX1280 — no GPIO
 involved. GPIO11–17 are the C3's dedicated SPI-flash pins and are unavailable.
@@ -141,6 +148,30 @@ Note `invert_left` was true by default on MK1 so both motors can be wired the sa
 That maps onto ELRS's per-output `inverted` flag rather than anything here. Check motor
 direction before closing the bot up.
 
+## IMU (LSM6DS3TR-C)
+
+Only a bring-up proof of concept exists so far: `src/src/rx_imu_poc.cpp`, built by the
+`Unified_ESP32C3_2400_RX_IMU_POC` env (`-D CATALYST_IMU_POC`). The normal env does not
+compile it. It reads WHO_AM_I, configures the accelerometer and prints samples over the
+USB log every 250 ms, while the radio runs normally.
+
+Verified on the EVB: WHO_AM_I `0x6A`, and a still board reads about 989 mg total
+(Z ≈ -989 mg as mounted), with the SX1280 unaffected.
+
+It shares the radio's bus by driving its own CS and transferring with `cs_mask 0`, so the
+SPI hardware never asserts the radio's NSS. Each transfer switches to 10 MHz and SPI
+mode 3, then restores the radio's 17.5 MHz and mode 0. A radio ISR landing mid-transfer
+could still run in the wrong mode, so this needs a lock before it is product code.
+
+Three traps, documented in the file header: `debugPrintf` has no width specifiers
+(`%02X` silently shifts every later argument), the first transfer after a clock/mode
+change reads garbage, and a write must clock exactly two bytes - padding lands in the
+next register with auto-increment on.
+
+The committed `catalystOrient` config field (a stored upright reference) is **not** the
+intended design. The baseline should be sampled at runtime instead, and those 4 bytes
+kept for behavioural settings such as weapon idle when airborne. Rework pending.
+
 ## AM32 serial passthrough
 
 An AM32 configurator attached to a PWM pad can talk to the ESC behind it, with the
@@ -165,7 +196,8 @@ clears it explicitly instead.
 - CH3 pad (GPIO19) → **left** ESC
 - CH4 pad (GPIO18) → **right** ESC
 - GPIO9 holds both ESCs in reset during setup, then releases them with the signal line
-  high so they land in the bootloader rather than the application.
+  high so they land in the bootloader rather than the application. The radio shares
+  that line and is reset along with them - harmless, since passthrough never uses it.
 
 GPIO9 needs isolation diodes (anode at each AM32 NRST, cathode on the shared node).
 Without them an ESC asserting its own reset drags the shared net low — and since GPIO9
