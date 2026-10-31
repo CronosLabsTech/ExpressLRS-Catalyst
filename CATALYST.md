@@ -88,11 +88,16 @@ just won't offer a serial pin.
 
 Mixing and invert-drive are implemented here — see **Catalyst settings** below.
 
-> **Naming caveat:** the target is called *Catalyst ELRS EVB*, but the EVB and the
-> form-factor board now share this exact pinout and configuration, so the one target
-> serves both and there is no reason to split it. Only the name is stale. Renaming it
-> would change `board_config`, the layout filename and the product name shown in the
-> configurator, so it is not free — worth doing deliberately, not incidentally.
+> **Form-factor target:** the table above is the *Catalyst ELRS EVB* target. The
+> form-factor board has its own, `catalyst.rx_2400.formfactor`
+> (`pio run -e Unified_ESP32C3_2400_RX_CatalystFF_via_UART`), which differs in three
+> ways:
+>
+> - Radio NRESET is GPIO9, shared with `/RST` and the BOOT strap. GPIO0 is `IMU_NCS`.
+>   With the wrong pin the radio reads version 65535 and ELRS reports no RF chipset.
+> - Status LED is a GRB WS2812 on GPIO8 (`led_rgb`, `led_rgb_isgrb`).
+> - Logging goes to the `TX_DEBUG` pad on GPIO21 at 460800 baud, TX only, not USB. RX
+>   must stay detached: GPIO20 is the left ESC signal line.
 
 ## Catalyst settings
 

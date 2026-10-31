@@ -1268,7 +1268,10 @@ static void setupSerial()
     {
         // For PWM receivers with no serial pins defined, only turn on the Serial port if logging is on
         #if defined(DEBUG_LOG) || defined(DEBUG_RCVR_LINKSTATS)
-        #if (defined(PLATFORM_ESP32_S3) && !defined(ESP32_S3_USB_JTAG_ENABLED)) || defined(PLATFORM_ESP32_C3)
+        #if defined(CATALYST_LOG_UART_TX)
+        // Already started in setup(), TX only.
+        BackpackOrLogStrm = &Serial;
+        #elif (defined(PLATFORM_ESP32_S3) && !defined(ESP32_S3_USB_JTAG_ENABLED)) || defined(PLATFORM_ESP32_C3)
         // Requires pull-down on GPIO3.  If GPIO3 has a pull-up (for JTAG) this doesn't work.
         // C3: log over native USB-Serial-JTAG so UART0 (GPIO20/21) stays free for
         // PWM outputs - on Catalyst GPIO21 is an ESC signal line.
@@ -1390,7 +1393,9 @@ static void setupSerial()
     }
 
 #if defined(DEBUG_ENABLED)
-#if defined(PLATFORM_ESP32_S3) || defined(PLATFORM_ESP32_C3)
+#if defined(CATALYST_LOG_UART_TX)
+    BackpackOrLogStrm = &Serial;
+#elif defined(PLATFORM_ESP32_S3) || defined(PLATFORM_ESP32_C3)
     USBSerial.begin(460800);
     BackpackOrLogStrm = &USBSerial;
 #else
@@ -2012,8 +2017,15 @@ void setup()
         // redirect ever runs. Those two GPIOs are PWM/LED outputs on this board,
         // so route straight to USBSerial here too rather than letting Serial.begin()
         // touch them at all.
+        //
+        // The form-factor board has a debug pad on U0TXD, so it logs there - TX
+        // only, because U0RXD (GPIO20) is the left ESC signal line. Passing an
+        // explicit TX pin with RX -1 stops the core defaulting RX onto it.
         #if defined(DEBUG_LOG)
-        #if defined(PLATFORM_ESP32_C3)
+        #if defined(CATALYST_LOG_UART_TX)
+        Serial.begin(460800, SERIAL_8N1, -1, CATALYST_LOG_UART_TX);
+        BackpackOrLogStrm = &Serial;
+        #elif defined(PLATFORM_ESP32_C3)
         USBSerial.begin(serialBaud);
         BackpackOrLogStrm = &USBSerial;
         #else
