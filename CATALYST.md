@@ -193,8 +193,30 @@ them for PWM. That costs channels 3/4, but keeps the CDC port alive across ELRS 
 reflashing needs no BOOT-strap dance. Bench and production-fixture case only — neither is
 driving motors — and with USB unplugged the channels behave normally.
 
-Logging goes out over the native USB-Serial-JTAG rather than UART0, because on this board
-UART0's pins (GPIO20/21) are a motor output and the status LED.
+## Debug logging
+
+On the **form-factor board** the log goes out **U0TXD (GPIO21) at 460800 8N1, TX only**.
+The env sets it:
+
+    [env:Unified_ESP32C3_2400_RX_CatalystFF_via_UART]
+        -D CATALYST_LOG_UART_TX=21
+
+and `rx_main.cpp` opens it as `Serial.begin(460800, SERIAL_8N1, -1, CATALYST_LOG_UART_TX)`.
+Note the baud is **hardcoded 460800**, not `firmwareOptions.uart_baud` (420000) - a
+terminal at 420000 sees only garbage. RX is deliberately `-1`: GPIO20 is the **left ESC
+signal line**, and passing an explicit TX pin with RX -1 stops the Arduino core defaulting
+RX onto it. Hook a USB-serial adapter's RX to the GPIO21 debug pad and share ground;
+nothing is received from the host, so its TX stays disconnected.
+
+Why the dedicated pad rather than the native USB-Serial-JTAG: USB logging only works with
+a host attached, and `devServoOutput` then leaves GPIO18/19 as USB instead of claiming
+them, **costing channels 3/4** (see above). The debug pad keeps all four PWM channels and
+the log alive at the same time.
+
+Without `CATALYST_LOG_UART_TX` the `#elif defined(PLATFORM_ESP32_C3)` branch logs over
+`USBSerial` instead. That is the EVB arrangement, where GPIO21 carries the status LED; on
+the form-factor board the status LED is the WS2812B on GPIO8 (`led_rgb` in
+`Catalyst ELRS FF.json`), so GPIO21 is free for the debug pad.
 
 ## Rebasing onto a newer ExpressLRS
 
