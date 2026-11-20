@@ -115,6 +115,11 @@ static void bindSingleWire(HardwareSerial &port, int pin, int uartNum) {
     esp_rom_gpio_connect_in_signal(pin, UART_PERIPH_SIGNAL(uartNum, SOC_UART_RX_PIN_IDX), false);
 }
 
+#if defined(AM32_PASSTHRU_TRACE)
+static uint8_t traceLastDrained  = 0;
+static uint8_t traceLastExpected = 0;
+#endif
+
 /** Read a packet, framed by an inter-byte gap. Returns 0 on timeout. */
 static size_t readPacket(HardwareSerial &port, uint8_t *buf, uint32_t firstTimeoutUs) {
     uint32_t start = micros();
@@ -148,16 +153,89 @@ static void writePacket(HardwareSerial &port, const uint8_t *buf, size_t len) {
     port.write(buf, len);
     port.flush();
 
+    // Drain the echo by MATCHING it, and wait for it rather than timing out.
+    //
+    // Gap-based framing cannot separate the echo from the reply here: at 19200
+    // back-to-back bytes are one byte time (~520us) apart, while AM32 answers
+    // ~319us after the request ends (Isaac measured both on the ATtiny
+    // transport). The reply therefore begins sooner than a normal inter-byte
+    // gap, so readPacket() will always fuse echo and reply into one packet.
+    // The ATtiny does not hit this because it bit-forwards between two pins and
+    // never hears itself; our pads are single-wire with TX and RX on the same
+    // pin, so the echo is ours to remove and only this drain can do it.
+    //
+    // peek() before consuming, so a byte that is not our echo is left for the
+    // reply. That makes a generous budget safe: if the echo is late we wait for
+    // it, and if it never comes the first reply byte stops us immediately.
     size_t discarded = 0;
-    uint32_t budget = (uint32_t)(len + 4) * 10 * BIT_TIME_US;
+    uint32_t budget = (uint32_t)(len + 20) * 10 * BIT_TIME_US;
     uint32_t start = micros();
     while (discarded < len && micros() - start < budget) {
         if (port.available()) {
+            if ((uint8_t)port.peek() != buf[discarded]) {
+                break;  // reply has started - leave it
+            }
             port.read();
             discarded++;
         }
     }
+#if defined(AM32_PASSTHRU_TRACE)
+    traceLastDrained = (uint8_t)discarded;
+    traceLastExpected = (uint8_t)len;
+#endif
 }
+
+#if defined(AM32_PASSTHRU_TRACE)
+/*
+ * Diagnostic capture. There is no free logging channel during passthrough:
+ * UART0 is the ESC link, UART1 is the host link, and USB cannot be attached
+ * because the host pads ARE the USB D+/D- pins. So record into RAM and dump
+ * afterwards, by rebinding UART0's TX back to the debug pad once the
+ * configurator has gone quiet. The dump ends the session - it is a one-shot.
+ */
+#define TRACE_MAX   40
+#define TRACE_HEAD  12
+
+struct TraceEntry {
+    uint8_t fromHost;
+    uint8_t len;
+    uint8_t drained;   // echo bytes removed by the preceding writePacket()
+    uint8_t expected;  // echo bytes that should have been removed
+    uint8_t head[TRACE_HEAD];
+};
+static TraceEntry traceBuf[TRACE_MAX];
+static uint8_t traceCount  = 0;
+static bool    traceDumped = false;
+
+static void traceRecord(bool fromHost, const uint8_t *buf, size_t len) {
+    if (traceCount >= TRACE_MAX) return;
+    TraceEntry &e = traceBuf[traceCount++];
+    e.fromHost = fromHost ? 1 : 0;
+    e.len = (uint8_t)(len > 255 ? 255 : len);
+    e.drained  = traceLastDrained;
+    e.expected = traceLastExpected;
+    for (size_t i = 0; i < TRACE_HEAD; i++) {
+        e.head[i] = (i < len) ? buf[i] : 0;
+    }
+}
+
+static void traceDump() {
+    Serial.flush();
+    Serial.begin(460800, SERIAL_8N1, -1, CATALYST_LOG_UART_TX);
+    delay(50);
+    Serial.printf("\r\n=== AM32 passthrough trace: %u packets ===\r\n", traceCount);
+    for (uint8_t i = 0; i < traceCount; i++) {
+        TraceEntry &e = traceBuf[i];
+        Serial.printf("%2u %s len=%3u drain=%u/%u :", i,
+                      e.fromHost ? "HOST->ESC" : "ESC->HOST", e.len, e.drained, e.expected);
+        uint8_t n = e.len < TRACE_HEAD ? e.len : TRACE_HEAD;
+        for (uint8_t j = 0; j < n; j++) Serial.printf(" %02X", e.head[j]);
+        Serial.print("\r\n");
+    }
+    Serial.print("=== end trace ===\r\n");
+    Serial.flush();
+}
+#endif  // AM32_PASSTHRU_TRACE
 
 /**
  * Relay until the configurator goes away. Packet-at-a-time with a direction
@@ -170,6 +248,10 @@ static void writePacket(HardwareSerial &port, const uint8_t *buf, size_t len) {
 static void relay(const Side &host, const Side &esc) {
     const Side *in  = &host;
     const Side *out = &esc;
+    // Last command forwarded to the ESC, so its echo can be recognised and
+    // stripped off the head of the reply. Commands are short; 16 is ample.
+    uint8_t lastSentToEsc[16];
+    size_t  lastSentToEscLen = 0;
     uint32_t firstTimeout = TIMEOUT_HOST_US;
     uint32_t lastActivity = millis();
 
@@ -177,6 +259,34 @@ static void relay(const Side &host, const Side &esc) {
         size_t len = readPacket(*in->port, rxBuffer, firstTimeout);
 
         if (len > 0) {
+#if defined(AM32_PASSTHRU_TRACE)
+            traceRecord(in == &host, rxBuffer, len);
+#endif
+            // Strip a command echo riding at the head of an ESC reply.
+            //
+            // Measured: the 6-byte "FF 00 .." address commands drain cleanly,
+            // but the 4-byte "03 .." read commands always come back with those
+            // four bytes in front of the payload, and the echo drain reports
+            // 0/4 even when given a 12.5ms budget. Whether those bytes are our
+            // own late echo or the ESC echoing the read command, the
+            // configurator does not want them: it counts them as payload, so
+            // every value it shows is four bytes late. That is what makes a
+            // correct EEPROM read back as garbage.
+            //
+            // Gap framing cannot remove them - AM32 answers ~319us after the
+            // request, sooner than the ~520us between back-to-back bytes at
+            // 19200 - so the prefix is dropped explicitly here.
+            if (in == &esc && lastSentToEscLen > 0 && len > lastSentToEscLen &&
+                memcmp(rxBuffer, lastSentToEsc, lastSentToEscLen) == 0) {
+                size_t strip = lastSentToEscLen;
+                len -= strip;
+                memmove(rxBuffer, rxBuffer + strip, len);
+            }
+            if (out == &esc) {
+                lastSentToEscLen = (len <= sizeof(lastSentToEsc)) ? len : 0;
+                if (lastSentToEscLen) memcpy(lastSentToEsc, rxBuffer, lastSentToEscLen);
+            }
+
             writePacket(*out->port, rxBuffer, len);
             lastActivity = millis();
 
@@ -191,6 +301,14 @@ static void relay(const Side &host, const Side &esc) {
             // pad detection would call pinMode(), whose output-disable path
             // unroutes UART TX for good - which silently killed the link a few
             // seconds after entry.
+#if defined(AM32_PASSTHRU_TRACE)
+            // Configurator has gone quiet - dump what we captured. One-shot:
+            // this rebinds UART0 away from the ESC, so the link ends here.
+            if (traceCount > 0 && !traceDumped && millis() - lastActivity > 4000) {
+                traceDumped = true;
+                traceDump();
+            }
+#endif
             in  = &host;
             out = &esc;
             firstTimeout = TIMEOUT_HOST_US;
@@ -262,8 +380,22 @@ bool am32Passthrough_checkAndRun()
     // application while we set up to talk to their bootloader.
     am32HoldReset();
 
+    // Flush before rebinding. DBGLN above writes to BackpackOrLogStrm, which on
+    // this board IS Serial (UART0 on the GPIO21 debug pad). bindSingleWire() then
+    // rematrixes UART0's TX onto the ESC signal line - so anything still sitting
+    // in the TX FIFO is transmitted straight into the ESC, right as it is being
+    // released into its bootloader. That desyncs the ESC's packet parser and every
+    // later exchange reads offset by a constant, which looks exactly like
+    // corrupted EEPROM in the configurator.
+    Serial.flush();
+    Serial1.flush();
+
     bindSingleWire(Serial1, hostPin, 1);
     bindSingleWire(Serial, escPin, 0);
+
+    // Anything the rebind shook loose is not protocol - drop it.
+    while (Serial.available())  { Serial.read(); }
+    while (Serial1.available()) { Serial1.read(); }
 
     // Both pads now idle high. Releasing reset with the ESC line high is what
     // lands it in the bootloader rather than the application.
