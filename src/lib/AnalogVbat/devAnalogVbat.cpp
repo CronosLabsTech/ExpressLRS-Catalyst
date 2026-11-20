@@ -38,6 +38,12 @@ static bool voltageSourceConnected[VOLTAGE_SOURCE_COUNT];
 static uint8_t vbatUpdateScale;
 static bool calibrationActive;
 
+#if defined(CATALYST_DIAG)
+static int32_t diagRawLoMv = INT32_MAX;
+static int32_t diagRawHiMv = INT32_MIN;
+static int32_t diagRawLastMv = 0;
+#endif
+
 static const voltageSource_t voltageSources[VOLTAGE_SOURCE_COUNT] = {
     {HARDWARE_vbat, HARDWARE_vbat_offset, HARDWARE_vbat_scale, HARDWARE_vbat_atten, HARDWARE_vbat_noreading},
 #if defined(PLATFORM_ESP32)
@@ -64,6 +70,21 @@ void Vbat_setCalibrationActive(bool active)
 {
     calibrationActive = active;
 }
+
+#if defined(CATALYST_DIAG)
+void Vbat_diagGetExtremes(int32_t *loMv, int32_t *hiMv, int32_t *lastMv)
+{
+    *loMv   = (diagRawLoMv == INT32_MAX) ? 0 : diagRawLoMv;
+    *hiMv   = (diagRawHiMv == INT32_MIN) ? 0 : diagRawHiMv;
+    *lastMv = diagRawLastMv;
+}
+
+void Vbat_diagResetExtremes()
+{
+    diagRawLoMv = INT32_MAX;
+    diagRawHiMv = INT32_MIN;
+}
+#endif
 
 static bool sourceIsDefined(uint8_t sourceIdx)
 {
@@ -233,6 +254,25 @@ static int timeout()
         if (voltageAdcUnitCharacterics[sourceIdx])
             adc = esp_adc_cal_raw_to_voltage(adc, voltageAdcUnitCharacterics[sourceIdx]);
         DBGLN("$ADC,%u,%u", sourceIdx, adc);
+#endif
+
+#if defined(CATALYST_DIAG)
+        // Record the unsmoothed excursion for source 0 (VBAT), deliberately ahead of
+        // the median filter - see devAnalogVbat.h for why.
+        if (sourceIdx == 0 && voltageSourceConnected[sourceIdx])
+        {
+            uint32_t calAdc = adc;
+#if defined(PLATFORM_ESP32) && !defined(DEBUG_VBAT_ADC)
+            // Without DEBUG_VBAT_ADC the raw count has not been linearised yet; the
+            // DEBUG_VBAT_ADC block above already did it in place.
+            if (voltageAdcUnitCharacterics[sourceIdx])
+                calAdc = esp_adc_cal_raw_to_voltage(calAdc, voltageAdcUnitCharacterics[sourceIdx]);
+#endif
+            const int32_t mv = adcToMilliVolts(sourceIdx, calAdc);
+            diagRawLastMv = mv;
+            if (mv < diagRawLoMv) diagRawLoMv = mv;
+            if (mv > diagRawHiMv) diagRawHiMv = mv;
+        }
 #endif
 
         if (voltageSourceConnected[sourceIdx] && voltageSmooth[sourceIdx].add(adc) == 0)

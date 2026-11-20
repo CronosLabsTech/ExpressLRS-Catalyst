@@ -798,6 +798,15 @@ void ICACHE_RAM_ATTR HWtimerCallbackTock()
 void LostConnection(bool resumeRx)
 {
     DBGLN("lost conn fc=%d fo=%d", FreqCorrection, hwTimer::getFreqOffset());
+#if defined(CATALYST_DIAG)
+    {
+        int32_t vbLo, vbHi, vbLast;
+        Vbat_diagGetExtremes(&vbLo, &vbHi, &vbLast);
+        DBGLN("$LOSTCONN,t=%u,vbat=%d,lo=%d,hi=%d",
+              (unsigned)millis(), (int)vbLast, (int)vbLo, (int)vbHi);
+        Vbat_diagResetExtremes();
+    }
+#endif
 
     setConnectionState(disconnected); //set lost connection
     RXtimerState = tim_disconnected;
@@ -875,6 +884,10 @@ void GotConnection(unsigned long now)
     }
 
     DBGLN("got conn");
+#if defined(CATALYST_DIAG)
+    // Pair with $LOSTCONN to get the outage duration by subtraction.
+    DBGLN("$GOTCONN,t=%u", (unsigned)millis());
+#endif
 }
 
 static void ICACHE_RAM_ATTR ProcessRfPacket_RC(OTA_Packet_s const * const otaPktPtr)
@@ -2035,6 +2048,33 @@ void setup()
         #else
         BackpackOrLogStrm = new NullStream();
         #endif
+
+#if defined(CATALYST_DIAG) && defined(PLATFORM_ESP32)
+        // Say why we just booted. If a radio dropout shows up in the log as a fresh
+        // boot then it was a reset, not an RF event. BROWNOUT means the supply
+        // collapsed; EXT_PIN means the reset line moved - and on this board GPIO9 is
+        // shared by SX1281 NRESET, both AM32 /RST (through D103/D104) and the C3 BOOT
+        // strap, so EXT_PIN points straight at that net.
+        {
+            const esp_reset_reason_t rr = esp_reset_reason();
+            const char *rrName;
+            switch (rr)
+            {
+            case ESP_RST_POWERON:   rrName = "POWERON";   break;
+            case ESP_RST_EXT:       rrName = "EXT_PIN";   break;
+            case ESP_RST_SW:        rrName = "SW";        break;
+            case ESP_RST_PANIC:     rrName = "PANIC";     break;
+            case ESP_RST_INT_WDT:   rrName = "INT_WDT";   break;
+            case ESP_RST_TASK_WDT:  rrName = "TASK_WDT";  break;
+            case ESP_RST_WDT:       rrName = "OTHER_WDT"; break;
+            case ESP_RST_DEEPSLEEP: rrName = "DEEPSLEEP"; break;
+            case ESP_RST_BROWNOUT:  rrName = "BROWNOUT";  break;
+            case ESP_RST_SDIO:      rrName = "SDIO";      break;
+            default:                rrName = "UNKNOWN";   break;
+            }
+            DBGLN("$BOOT,reset=%s(%d)", rrName, (int)rr);
+        }
+#endif
 
         // Init EEPROM and load config, checking powerup count
         setupConfigAndPocCheck();
